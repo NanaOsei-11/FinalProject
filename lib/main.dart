@@ -357,130 +357,171 @@ class _CameraGalleryScreenState extends State<CameraGalleryScreen> {
         model: "assets/best_float32.tflite",
         labels: "assets/labels.txt",
       );
-      print("Model loaded successfully: $res");
+      print("Model loaded: $res");
     } catch (e) {
-      print("Failed to load model: $e");
+      print("Error loading model: $e");
     }
   }
 
-  Future<void> _pickImage(ImageSource source) async {
-    final pickedFile = await ImagePicker().pickImage(source: source);
+  Future<void> _getImage(ImageSource source) async {
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickImage(source: source);
+
     if (pickedFile != null) {
       setState(() {
         _image = File(pickedFile.path);
-        _imageName = pickedFile.path.split('/').last;
+        _imageName = pickedFile.path;
+        widget.history.add(pickedFile.path);
       });
+
+      _runModelOnImage(_image!);
     }
   }
 
-  Future<void> _runModel() async {
+  Future<void> _runModelOnImage(File image) async {
     if (_image == null) {
+      print("No image selected");
       return;
     }
 
-    try {
-      var recognitions = await Tflite.runModelOnImage(
-        path: _image!.path,
-        imageMean: 0.0,
-        imageStd: 255.0,
-        numResults: 2,
-        threshold: 0.2,
-        asynch: true,
-      );
+    // Read the image
+    final imageBytes = await image.readAsBytes();
+    final decodedImage = img.decodeImage(imageBytes);
 
-      print("Recognitions: $recognitions");
-
-      // Add the image to history
-      setState(() {
-        widget.history.add(_image!.path);
-      });
-
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => ImageScreen(
-            imagePath: _image!.path,
-            recognitions: recognitions,
-          ),
-        ),
-      );
-    } catch (e) {
-      print("Error running model: $e");
+    if (decodedImage == null) {
+      print("Error decoding image");
+      return;
     }
+
+    // Resize the image to 224x224
+    final resizedImage = img.copyResize(decodedImage, width: 224, height: 224);
+
+    // Create a buffer to hold the normalized pixel values
+    final input = Float32List(224 * 224 * 3); // Adjusted for RGB channels
+
+    int pixelIndex = 0;
+    for (int y = 0; y < 224; y++) {
+      for (int x = 0; x < 224; x++) {
+        // Get the pixel value
+        int pixel = resizedImage.getPixel(x, y);
+
+        // Extract RGB components
+        int red = img.getRed(pixel);
+        int green = img.getGreen(pixel);
+        int blue = img.getBlue(pixel);
+
+        // Normalize the RGB values to [0, 1]
+        input[pixelIndex++] = red / 255.0;
+        input[pixelIndex++] = green / 255.0;
+        input[pixelIndex++] = blue / 255.0;
+      }
+    }
+
+    var recognitions = await Tflite.runModelOnImage(
+      path: image.path,
+      numResults: 1,
+      threshold: 0.05,
+    );
+
+    setState(() {
+      // Update UI with the result
+      print("Model output: $recognitions");
+    });
+  }
+
+  void _clearImage() {
+    setState(() {
+      _image = null;
+      _imageName = null;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Camera & Gallery'),
-        backgroundColor: Colors.black,
-      ),
-      body: Column(
-        children: <Widget>[
-          Container(
-            height: 300,
-            width: double.infinity,
-            color: Colors.grey[300],
-            child: _image != null
-                ? Image.file(_image!, fit: BoxFit.cover)
-                : Icon(
-                    Icons.photo,
-                    size: 100,
-                    color: Colors.grey[500],
-                  ),
+      body: Stack(
+        children: [
+          ColorFiltered(
+            colorFilter: ColorFilter.mode(
+              Colors.black.withOpacity(0.25),
+              BlendMode.overlay,
+            ),
+            child: Image.asset(
+              'assets/Background.jpg',
+              fit: BoxFit.cover,
+              width: double.infinity,
+              height: double.infinity,
+            ),
           ),
-          SizedBox(height: 20),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: <Widget>[
-              ElevatedButton.icon(
-                onPressed: () => _pickImage(ImageSource.camera),
-                icon: Icon(Icons.camera_alt),
-                label: Text('Camera'),
-                style: ElevatedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  backgroundColor: Colors.black,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                  padding:
-                      EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-                  textStyle: TextStyle(fontSize: 18),
-                  elevation: 5,
+          Column(
+            children: [
+              AppBar(
+                backgroundColor: Colors.transparent,
+                title: const Text(''),
+              ),
+              Expanded(
+                child: Center(
+                  child: _image == null
+                      ? const Text(
+                          '',
+                          style: TextStyle(color: Colors.white),
+                        )
+                      : Stack(
+                          children: [
+                            Image.file(_image!),
+                            Positioned(
+                              top: 10,
+                              right: 10,
+                              child: IconButton(
+                                icon: Icon(Icons.delete, color: Colors.red),
+                                onPressed: _clearImage,
+                              ),
+                            ),
+                          ],
+                        ),
                 ),
               ),
-              ElevatedButton.icon(
-                onPressed: () => _pickImage(ImageSource.gallery),
-                icon: Icon(Icons.photo_library),
-                label: Text('Gallery'),
-                style: ElevatedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  backgroundColor: Colors.black,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                  padding:
-                      EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-                  textStyle: TextStyle(fontSize: 18),
-                  elevation: 5,
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 20.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    FloatingActionButton(
+                      heroTag: "camera",
+                      onPressed: () => _getImage(ImageSource.camera),
+                      tooltip: 'Pick Image from Camera',
+                      child: const Icon(Icons.add_a_photo),
+                      foregroundColor: Colors.black,
+                      backgroundColor: Colors.redAccent[700],
+                    ),
+                    FloatingActionButton(
+                      heroTag: "gallery",
+                      onPressed: () => _getImage(ImageSource.gallery),
+                      tooltip: 'Pick Image from Gallery',
+                      child: const Icon(Icons.photo_library),
+                      foregroundColor: Colors.black,
+                      backgroundColor: Colors.yellowAccent,
+                    ),
+                    FloatingActionButton(
+                      heroTag: "recipes",
+                      onPressed: () async {
+                        const url =
+                            'https://insanelygoodrecipes.com/ghana-foods/';
+                        if (await canLaunch(url)) {
+                          await launch(url);
+                        } else {
+                          throw 'Could not launch $url';
+                        }
+                      },
+                      tooltip: 'View Recipes Online',
+                      child: const Icon(Icons.public),
+                      foregroundColor: Colors.black,
+                      backgroundColor: Color.fromARGB(255, 5, 71, 41),
+                    ),
+                  ],
                 ),
               ),
             ],
-          ),
-          SizedBox(height: 20),
-          ElevatedButton(
-            onPressed: _runModel,
-            child: Text('Run Model'),
-            style: ElevatedButton.styleFrom(
-              foregroundColor: Colors.white,
-              backgroundColor: Colors.black,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(30),
-              ),
-              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-              textStyle: TextStyle(fontSize: 18),
-              elevation: 5,
-            ),
           ),
         ],
       ),
@@ -490,41 +531,17 @@ class _CameraGalleryScreenState extends State<CameraGalleryScreen> {
 
 class ImageScreen extends StatelessWidget {
   final String imagePath;
-  final List<dynamic>? recognitions;
 
-  const ImageScreen({required this.imagePath, this.recognitions});
+  ImageScreen({required this.imagePath});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Result'),
-        backgroundColor: Colors.black,
+        title: const Text('Uploaded Dishes'),
       ),
-      body: Column(
-        children: <Widget>[
-          Container(
-            height: 300,
-            width: double.infinity,
-            color: Colors.grey[300],
-            child: Image.file(File(imagePath), fit: BoxFit.cover),
-          ),
-          SizedBox(height: 20),
-          if (recognitions != null)
-            Expanded(
-              child: ListView.builder(
-                itemCount: recognitions!.length,
-                itemBuilder: (context, index) {
-                  var recognition = recognitions![index];
-                  return ListTile(
-                    title: Text(recognition['label']),
-                    subtitle: Text(
-                        'Confidence: ${(recognition['confidence'] * 100).toStringAsFixed(2)}%'),
-                  );
-                },
-              ),
-            ),
-        ],
+      body: Center(
+        child: Image.file(File(imagePath)),
       ),
     );
   }
