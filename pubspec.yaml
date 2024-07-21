@@ -27,6 +27,6 @@ flutter:
 
   assets:
     - assets/Background.jpg
-    - assets/best_float32.tflite
+    - assets/final_best_float32.tflite
     - images/Background.jpg  # Add your image path here
     - assets/labels.txt

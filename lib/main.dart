@@ -354,7 +354,7 @@ class _CameraGalleryScreenState extends State<CameraGalleryScreen> {
   Future<void> _loadModel() async {
     try {
       String? res = await Tflite.loadModel(
-        model: "assets/best_float32.tflite",
+        model: "assets/final_best_float32.tflite",
         labels: "assets/labels.txt",
       );
       print("Model loaded: $res");
